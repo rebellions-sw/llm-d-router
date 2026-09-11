@@ -150,3 +150,34 @@ func TestPick_NoCandidates(t *testing.T) {
 		t.Fatalf("expected no endpoints, got %d", len(result.TargetEndpoints))
 	}
 }
+
+// Endpoints without metadata have no stable identity. The ring must still rotate
+// deterministically over them rather than reshuffling on every call, which is what an
+// address-derived key would do once the framework clones endpoints per cycle.
+func TestPick_RotatesDeterministicallyWithoutMetadata(t *testing.T) {
+	fresh := func() []*fwksched.ScoredEndpoint {
+		return []*fwksched.ScoredEndpoint{
+			{Endpoint: fwksched.NewEndpoint(nil, nil, nil), Score: 0},
+			{Endpoint: fwksched.NewEndpoint(nil, nil, nil), Score: 0},
+			{Endpoint: fwksched.NewEndpoint(nil, nil, nil), Score: 0},
+		}
+	}
+	for _, ep := range fresh() {
+		if got := endpointKey(ep); got != "" {
+			t.Fatalf("endpointKey must not derive a key from an address: got %q", got)
+		}
+	}
+
+	picker := NewRoundRobinPicker(1)
+	for i := 0; i < 6; i++ {
+		candidates := fresh() // the framework hands over freshly cloned endpoints each cycle
+		got := picker.Pick(context.Background(), candidates)
+		if len(got.TargetEndpoints) != 1 {
+			t.Fatalf("call %d: expected 1 endpoint, got %d", i, len(got.TargetEndpoints))
+		}
+		// Pick puts the *ScoredEndpoint itself into TargetEndpoints, not the inner Endpoint.
+		if want := candidates[i%len(candidates)]; got.TargetEndpoints[0] != fwksched.Endpoint(want) {
+			t.Fatalf("call %d: cursor did not advance over the incoming order", i)
+		}
+	}
+}

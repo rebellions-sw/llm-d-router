@@ -95,7 +95,13 @@ func (p *RoundRobinPicker) TypedName() fwkplugin.TypedName {
 func endpointKey(scoredEndpoint *fwksched.ScoredEndpoint) string {
 	metadata := scoredEndpoint.GetMetadata()
 	if metadata == nil {
-		return scoredEndpoint.String()
+		// No stable identity to sort on. Returning the same key for every such endpoint
+		// makes them compare equal, so SortStableFunc keeps their incoming order instead
+		// of reordering them. Endpoint.String() must not be used here: it renders the
+		// struct with %+v, which includes pointer addresses, and the framework clones
+		// endpoints per scheduling cycle -- the ring would be rebuilt differently on
+		// every call and the rotation guarantee would be lost without any signal.
+		return ""
 	}
 
 	return metadata.Port + "|" + metadata.Address
