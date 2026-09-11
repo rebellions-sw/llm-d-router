@@ -1,0 +1,174 @@
+# EPP 이미지를 빌드해 레지스트리에 올린다.
+#
+# Purpose : upstream llm-d-router 에 우리 round-robin picker 를 넣어 컴파일한 EPP 이미지를
+#           발행한다. upstream 은 플러그인을 런타임에 주입할 수 없어(Register 가 컴파일 타임
+#           고정) 이미지를 직접 만들어야 한다.
+# Trigger : workflow_dispatch (수동). 소스가 바뀌었을 때만 돌린다.
+# Inputs  : registry / image-name / upstream-ref / push / force
+# Outputs : image (registry/name:tag) · tag · skipped
+# Owner   : coding-assistant 팀
+# Runbook : docs/design-epp-custom-picker.md (rebellions-sw/coding-assistant)
+#
+# 태그는 내용으로만 정한다 — `<upstream 태그>-rr-<picker 디렉토리 트리 sha7>`.
+# 날짜나 커밋 SHA 를 쓰면 내용이 같은데 새 후보가 쌓인다. 같은 태그가 이미 있으면 건너뛴다.
+#
+# 레지스트리를 입력으로 받는 이유는 개발과 출시가 다른 자리를 쓰기 때문이다 — 개발은 사내
+# Harbor, 출시는 고객 채널. 인증은 REGISTRY_USERNAME / REGISTRY_PASSWORD 시크릿 한 쌍으로
+# 받는다. 레지스트리를 바꿀 때 워크플로가 아니라 시크릿 값만 바꾸면 되도록 이름을 중립으로 뒀다.
+name: Build EPP image (round-robin picker)
+
+on:
+  workflow_dispatch:
+    inputs:
+      registry:
+        description: '레지스트리 + 프로젝트 경로 (예: harbor.mgmt.rbln.in/coding-assistant)'
+        required: false
+        type: string
+        default: harbor.mgmt.rbln.in/coding-assistant
+      image-name:
+        description: '이미지 이름. llm-d 를 쓰지 않는다 — upstream 배포판으로 오인되면 안 된다'
+        required: false
+        type: string
+        default: rbln-epp
+      upstream-ref:
+        description: '이 브랜치가 올라탄 upstream 태그. 이미지 라벨과 태그 앞부분이 된다'
+        required: false
+        type: string
+        default: v0.10.0
+      push:
+        description: '레지스트리로 push 할지. false 면 빌드와 검사만 한다'
+        required: false
+        type: boolean
+        default: true
+      force:
+        description: '같은 태그가 이미 있어도 다시 빌드해 덮어쓴다'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.tag.outputs.image }}
+      tag: ${{ steps.tag.outputs.tag }}
+      skipped: ${{ steps.exists.outputs.skipped }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 태그를 내용에서 산출한다
+        id: tag
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          IMAGE_NAME: ${{ inputs.image-name }}
+          UPSTREAM_REF: ${{ inputs.upstream-ref }}
+        run: |
+          set -euo pipefail
+          # picker 디렉토리의 트리 해시 — 그 안이 바뀌어야 새 태그가 난다.
+          picker_sha=$(git rev-parse --short=7 "HEAD:pkg/epp/framework/plugins/scheduling/picker/roundrobin")
+          tag="${UPSTREAM_REF}-rr-${picker_sha}"
+          {
+            echo "tag=${tag}"
+            echo "image=${REGISTRY}/${IMAGE_NAME}:${tag}"
+            echo "picker_sha=${picker_sha}"
+            # docker/login-action 은 호스트만 받는다 — 프로젝트 경로를 떼어낸다.
+            echo "host=${REGISTRY%%/*}"
+          } >> "$GITHUB_OUTPUT"
+          echo "::notice::태그 ${REGISTRY}/${IMAGE_NAME}:${tag}"
+
+      - name: 레지스트리 로그인
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ steps.tag.outputs.host }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: 같은 태그가 이미 있으면 건너뛴다
+        id: exists
+        env:
+          IMAGE: ${{ steps.tag.outputs.image }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          if [ "${FORCE}" = "true" ]; then
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::force=true — 존재 여부를 묻지 않고 다시 빌드한다"
+          elif docker manifest inspect "${IMAGE}" >/dev/null 2>&1; then
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${IMAGE} 가 이미 있다 — 내용이 같으므로 빌드를 건너뛴다"
+          else
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.exists.outputs.skipped != 'true'
+
+      - name: 빌드하고 push 한다
+        if: steps.exists.outputs.skipped != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.epp
+          push: ${{ inputs.push }}
+          load: ${{ !inputs.push }}
+          tags: ${{ steps.tag.outputs.image }}
+          build-args: |
+            BUILD_REF=${{ steps.tag.outputs.tag }}
+            COMMIT_SHA=${{ github.sha }}
+          labels: |
+            rbln.upstream-ref=${{ inputs.upstream-ref }}
+            rbln.picker-tree-sha=${{ steps.tag.outputs.picker_sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=Apache-2.0
+
+      # Apache-2.0 4(a)/(b). 이 이미지는 고객에게 배포되므로 라이선스 사본과 변경 고지가
+      # 실제로 들어갔는지 매 빌드 확인한다. distroless 에는 셸이 없어 export 로 본다.
+      - name: 라이선스 자산이 이미지에 있는지 확인한다
+        if: steps.exists.outputs.skipped != 'true'
+        env:
+          IMAGE: ${{ steps.tag.outputs.image }}
+          PUSHED: ${{ inputs.push }}
+        run: |
+          set -euo pipefail
+          [ "${PUSHED}" = "true" ] && docker pull -q "${IMAGE}"
+          cid=$(docker create "${IMAGE}")
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          found=$(docker export "$cid" | tar -tf - | grep -cE '^licenses/(LICENSE|NOTICE-rebellions)$')
+          [ "$found" = "2" ] \
+            || { echo "::error::/licenses 에 LICENSE 와 NOTICE-rebellions 가 모두 있어야 한다 (찾은 수 ${found})"; exit 1; }
+          echo "::notice::라이선스 자산 2개 확인"
+
+      - name: 플러그인이 실제로 들어갔는지 확인한다
+        if: steps.exists.outputs.skipped != 'true'
+        env:
+          IMAGE: ${{ steps.tag.outputs.image }}
+        run: |
+          set -euo pipefail
+          cid=$(docker create "${IMAGE}")
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          docker cp "$cid:/app/epp" /tmp/epp
+          # upstream 바이너리에는 이 경로가 0건이다 — 우리 빌드임을 가르는 지문이다.
+          n=$(strings /tmp/epp | grep -c 'picker/roundrobin' || true)
+          [ "${n:-0}" -gt 0 ] \
+            || { echo "::error::바이너리에 round-robin picker 가 없다 — Register 가 빠졌을 수 있다"; exit 1; }
+          echo "::notice::picker/roundrobin 심볼 ${n}건"
+
+      - name: Summary
+        env:
+          IMAGE: ${{ steps.tag.outputs.image }}
+          SKIPPED: ${{ steps.exists.outputs.skipped }}
+          UPSTREAM_REF: ${{ inputs.upstream-ref }}
+        run: |
+          {
+            echo "## EPP 이미지"
+            echo ""
+            echo "| 항목 | 값 |"
+            echo "|---|---|"
+            echo "| 이미지 | \`${IMAGE}\` |"
+            echo "| upstream 기반 | \`${UPSTREAM_REF}\` |"
+            echo "| 빌드 건너뜀 | ${SKIPPED} |"
+          } >> "$GITHUB_STEP_SUMMARY"
