@@ -1,0 +1,21 @@
+pkg/epp/framework/plugins/scheduling/picker/roundrobin/picker.go
+  s_7640950b359408::t_f673bc04014b31 98-104
+pkg/epp/framework/plugins/scheduling/picker/roundrobin/picker_test.go
+  s_7640950b359408::t_75b33cd0f3e4b9 153-183
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "1675c2af0577fe2bf45242ad0fb9ce57cbab9f94",
+  "prompts": {},
+  "sessions": {
+    "s_7640950b359408": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e87f3642-117d-4db0-95f6-bf6e8a24b6f0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "rebel-jinmoo <jinmoo_seok@rebellions.ai>"
+    }
+  }
+}
