@@ -1,0 +1,23 @@
+Dockerfile.epp
+  s_7640950b359408::t_d82de5d5611f1d 29,51-55
+NOTICE-rebellions
+  s_7640950b359408::t_0383c41fc5f199 1-31
+cmd/epp/runner/runner.go
+  s_7640950b359408::t_e6c3bf4f903b97 15-17,126-127,619
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "62227305fe83b6d5699a61e5c7e7ab8273b57033",
+  "prompts": {},
+  "sessions": {
+    "s_7640950b359408": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e87f3642-117d-4db0-95f6-bf6e8a24b6f0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "rebel-jinmoo <jinmoo_seok@rebellions.ai>"
+    }
+  }
+}
