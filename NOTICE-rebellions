@@ -1,0 +1,31 @@
+Rebellions modifications to llm-d-router
+========================================
+
+This image is a Derivative Work of llm-d-router (https://github.com/llm-d/llm-d-router),
+licensed under the Apache License, Version 2.0. The upstream license text is at
+/licenses/LICENSE.
+
+Upstream baseline
+-----------------
+  repository : https://github.com/llm-d/llm-d-router
+  tag        : see the `rbln.upstream-ref` image label
+
+Changes made by Rebellions Inc. (Apache-2.0 section 4(b))
+---------------------------------------------------------
+  added    pkg/epp/framework/plugins/scheduling/picker/roundrobin/
+           A scheduling picker that rotates over candidate endpoints in a fixed order,
+           ignoring scorer output. Registered as plugin type "round-robin-picker".
+           Copyright 2026 Rebellions Inc., Apache-2.0.
+
+  modified cmd/epp/runner/runner.go
+           Imports the picker above and registers it alongside the upstream pickers.
+           Upstream copyright notice is preserved.
+
+  modified Dockerfile.epp
+           Copies the license texts listed here into /licenses of the runtime image.
+
+No other upstream file is changed. Upstream copyright, patent, trademark and attribution
+notices are preserved as required by Apache-2.0 section 4(c).
+
+This is not an official llm-d distribution. "llm-d" is not used in the image name; see
+Apache-2.0 section 6 (Trademarks).

@@ -26,6 +26,7 @@ COPY cmd/      cmd/
 COPY internal/ internal/
 COPY pkg/      pkg/
 COPY version/  version/
+COPY LICENSE NOTICE-rebellions ./
 
 # Precompile without version flags so commit-only changes can reuse the
 # expensive compile work from the Docker layer cache.
@@ -46,6 +47,11 @@ FROM ${BASE_IMAGE}
 WORKDIR /
 
 COPY --from=go-builder /workspace/bin/epp /app/epp
+
+# Apache-2.0 section 4(a)/(b): ship the upstream license text and a record of what
+# Rebellions changed. distroless carries no /licenses of its own.
+COPY --from=go-builder /workspace/LICENSE /licenses/LICENSE
+COPY --from=go-builder /workspace/NOTICE-rebellions /licenses/NOTICE-rebellions
 
 USER 65532:65532
 
