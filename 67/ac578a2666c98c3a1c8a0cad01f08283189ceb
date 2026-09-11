@@ -1,0 +1,19 @@
+.github/workflows/rbln-build-epp.yaml
+  s_7640950b359408::t_5a35308d33d2ff 1-174
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "67ac578a2666c98c3a1c8a0cad01f08283189ceb",
+  "prompts": {},
+  "sessions": {
+    "s_7640950b359408": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e87f3642-117d-4db0-95f6-bf6e8a24b6f0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "rebel-jinmoo <jinmoo_seok@rebellions.ai>"
+    }
+  }
+}
