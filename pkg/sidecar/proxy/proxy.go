@@ -295,6 +295,22 @@ type Config struct {
 	// DNS names (e.g., LWS pod names) are automatically resolved to IPs at startup.
 	MoRIIODecodeHosts []string
 
+	// NIXLPushMode dispatches prefill and decode concurrently for vLLM's
+	// NixlPushConnector: decode registers its blocks with prefill over NIXL and
+	// prefill RDMA-writes KV into them. Decode's kv_transfer_params are built
+	// from the prefill pod address and the NIXLPush* fields below. The prefill
+	// engine's kv_transfer_config.engine_id must be "<pod IP>:<side channel port>".
+	NIXLPushMode bool
+	// NIXLPushSideChannelPort is the prefill engine's NIXL side channel port
+	// (VLLM_NIXL_SIDE_CHANNEL_PORT).
+	NIXLPushSideChannelPort int
+	// NIXLPushPrefillTPSize is the prefill engine's tensor-parallel size.
+	NIXLPushPrefillTPSize int
+	// NIXLPushPrefillPPSize is the prefill engine's pipeline-parallel size.
+	// Decode registers its blocks with, and waits for a write notification
+	// from, every prefill stage.
+	NIXLPushPrefillPPSize int
+
 	// MoRIIORemoteHostSpecs / MoRIIODecodeHostSpecs / MoRIIODecodePodIPSpec hold
 	// the ORIGINAL host specs (DNS names or raw IPs) exactly as supplied on the
 	// CLI, captured in Complete() before one-shot resolution rewrites the

@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"strconv"
@@ -34,6 +35,10 @@ import (
 
 	"github.com/llm-d/llm-d-router/pkg/common/observability/tracing"
 )
+
+// requestFieldRemoteRequestID is the prefill engine's request id on the decode
+// request; vLLM's NIXL decode side uses it to keep prefill's KV lease alive.
+const requestFieldRemoteRequestID = "remote_request_id"
 
 // tokenLimitMap returns the map holding the token-limit fields: sampling_params
 // for the generate API (created if absent), or the request itself otherwise.
@@ -77,6 +82,15 @@ func (s *Server) handleNIXLV2(w http.ResponseWriter, r *http.Request, prefillPod
 		transferID := "tx" + uuidStr
 		s.runNIXLProtocolV2WriteParallel(w, r, original, completionRequest, uuidStr, transferID, prefillPodHostPort, kvCacheSource)
 		return
+	}
+
+	if s.config.NIXLPushMode {
+		if prefillRequestID, ok := vllmEngineRequestID(r.URL.Path, uuidStr); ok {
+			s.runNIXLPushParallel(w, r, completionRequest, uuidStr, prefillRequestID, prefillPodHostPort, kvCacheSource, apiType)
+			return
+		}
+		s.logger.V(4).Info("NIXL push dispatch does not cover this API, using serial dispatch",
+			"path", r.URL.Path, "request_id", uuidStr)
 	}
 
 	// Prefill Stage
@@ -472,7 +486,6 @@ func (s *Server) runNIXLProtocolV2WriteParallel(
 	s.logger.V(4).Info("running NIXL protocol V2 (concurrent dispatch)",
 		"url", prefillPodHostPort, "request_id", uuidStr)
 
-	tracer := tracing.Tracer()
 	parentCtx := r.Context()
 	requestStartedAt := time.Now()
 
@@ -612,7 +625,18 @@ func (s *Server) runNIXLProtocolV2WriteParallel(
 		return
 	}
 
-	// ---------- Fire prefill + decode in parallel ----------
+	s.dispatchPrefillDecodeParallel(parentCtx, w, r, requestStartedAt, uuidStr, prefillPodHostPort, dpRank, pbody, dbody)
+	_ = original // kept for signature symmetry with the strictly-serial path
+}
+
+// dispatchPrefillDecodeParallel sends the prefill and decode requests
+// concurrently and commits decode's response to the client once prefill succeeds.
+func (s *Server) dispatchPrefillDecodeParallel(
+	parentCtx context.Context, w http.ResponseWriter, r *http.Request, requestStartedAt time.Time,
+	uuidStr, prefillPodHostPort string, dpRank int, pbody, dbody []byte,
+) {
+	tracer := tracing.Tracer()
+
 	prefillHandler, err := s.prefillerProxyHandler(prefillPodHostPort)
 	if err != nil {
 		if err := errorBadGateway(err, w); err != nil {
@@ -787,7 +811,91 @@ func (s *Server) runNIXLProtocolV2WriteParallel(
 			attribute.Bool("llm_d.pd_proxy.parallel_dispatch", true),
 		)
 	}
-	_ = original // kept for signature symmetry with the strictly-serial path
+}
+
+// vllmEngineRequestID returns the id vLLM's OpenAI server gives the engine
+// request for x-request-id requestID on path, without the random suffix the
+// engine appends. Completions use prompt index 0: a multi-prompt request keeps
+// prefill's lease alive for its first prompt only.
+func vllmEngineRequestID(path, requestID string) (string, bool) {
+	switch path {
+	case ChatCompletionsPath:
+		return "chatcmpl-" + requestID, true
+	case CompletionsPath:
+		return "cmpl-" + requestID + "-0", true
+	case GeneratePath:
+		return "generate-tokens-" + requestID, true
+	default:
+		return "", false
+	}
+}
+
+// runNIXLPushParallel dispatches prefill and decode concurrently for vLLM's
+// NixlPushConnector. The decode request names the prefill engine, so decode
+// registers its blocks with prefill while prefill is still computing, and
+// prefill RDMA-writes the KV into them when it finishes.
+func (s *Server) runNIXLPushParallel(
+	w http.ResponseWriter, r *http.Request, completionRequest map[string]any,
+	uuidStr, prefillRequestID, prefillPodHostPort, kvCacheSource string,
+	apiType APIType,
+) {
+	s.logger.V(4).Info("running NIXL protocol V2 (push dispatch)",
+		"url", prefillPodHostPort, "request_id", uuidStr)
+	requestStartedAt := time.Now()
+
+	prefillRequest := maps.Clone(completionRequest)
+	// tokenLimitMap writes into sampling_params, which the decode request shares.
+	if sp, ok := prefillRequest[requestFieldSamplingParams].(map[string]any); ok {
+		prefillRequest[requestFieldSamplingParams] = maps.Clone(sp)
+	}
+	prefillRequest[requestFieldKVTransferParams] = map[string]any{
+		requestFieldDoRemoteDecode:  true,
+		requestFieldDoRemotePrefill: false,
+		requestFieldRemoteEngineID:  nil,
+		requestFieldRemoteBlockIDs:  nil,
+		requestFieldRemoteHost:      nil,
+		requestFieldRemotePort:      nil,
+	}
+	s.addP2PPullToPrefill(prefillRequest[requestFieldKVTransferParams].(map[string]any), kvCacheSource, prefillPodHostPort)
+	prefillRequest[requestFieldStream] = false
+	delete(prefillRequest, requestFieldStreamOptions)
+	tokenMap, _ := tokenLimitMap(prefillRequest, apiType)
+	for _, field := range tokenLimitFieldsForAPIType(apiType) {
+		tokenMap[field] = 1
+	}
+
+	pbody, err := json.Marshal(prefillRequest)
+	if err != nil {
+		if err := errorJSONInvalid(err, w); err != nil {
+			s.logger.Error(err, "failed to send error response to client (push-dispatch marshal P)")
+		}
+		return
+	}
+
+	prefillHost, _, splitErr := net.SplitHostPort(prefillPodHostPort)
+	if splitErr != nil {
+		prefillHost = prefillPodHostPort
+	}
+	completionRequest[requestFieldKVTransferParams] = map[string]any{
+		requestFieldDoRemotePrefill: true,
+		requestFieldDoRemoteDecode:  false,
+		requestFieldRemoteEngineID:  net.JoinHostPort(prefillHost, strconv.Itoa(s.config.NIXLPushSideChannelPort)),
+		requestFieldRemoteRequestID: prefillRequestID,
+		requestFieldRemoteHost:      prefillHost,
+		requestFieldRemotePort:      s.config.NIXLPushSideChannelPort,
+		"tp_size":                   s.config.NIXLPushPrefillTPSize,
+		"pp_size":                   s.config.NIXLPushPrefillPPSize,
+	}
+
+	dbody, err := json.Marshal(completionRequest)
+	if err != nil {
+		if err := errorJSONInvalid(err, w); err != nil {
+			s.logger.Error(err, "failed to send error response to client (push-dispatch marshal D)")
+		}
+		return
+	}
+
+	s.dispatchPrefillDecodeParallel(r.Context(), w, r, requestStartedAt, uuidStr, prefillPodHostPort, 0, pbody, dbody)
 }
 
 // truncate shortens s to at most n characters, appending "..." if truncated.

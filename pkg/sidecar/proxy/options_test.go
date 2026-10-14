@@ -688,6 +688,50 @@ func TestValidateEnableP2PPull(t *testing.T) {
 	})
 }
 
+func TestValidateNIXLPushMode(t *testing.T) {
+	t.Run("rejects nixl-push-mode with non-NIXLv2 connector", func(t *testing.T) {
+		opts := NewOptions()
+		opts.KVConnector = KVConnectorSharedStorage
+		opts.NIXLPushMode = true
+		require.NoError(t, opts.Complete())
+		require.ErrorContains(t, opts.Validate(), "--nixl-push-mode requires --kv-connector=nixlv2")
+	})
+
+	t.Run("rejects nixl-push-mode with moriio-write-mode", func(t *testing.T) {
+		opts := NewOptions()
+		opts.NIXLPushMode = true
+		opts.MoRIIOWriteMode = true
+		opts.MoRIIODecodePodIP = "10.0.0.1"
+		require.NoError(t, opts.Complete())
+		require.ErrorContains(t, opts.Validate(), "mutually exclusive")
+	})
+
+	t.Run("rejects a non-positive prefill tp size", func(t *testing.T) {
+		opts := NewOptions()
+		opts.NIXLPushMode = true
+		opts.NIXLPushPrefillTPSize = 0
+		require.NoError(t, opts.Complete())
+		require.ErrorContains(t, opts.Validate(), "--nixl-push-prefill-tp-size")
+	})
+
+	t.Run("rejects a non-positive prefill pp size", func(t *testing.T) {
+		opts := NewOptions()
+		opts.NIXLPushMode = true
+		opts.NIXLPushPrefillPPSize = 0
+		require.NoError(t, opts.Complete())
+		require.ErrorContains(t, opts.Validate(), "--nixl-push-prefill-pp-size")
+	})
+
+	t.Run("allows nixl-push-mode with defaults", func(t *testing.T) {
+		opts := NewOptions()
+		opts.NIXLPushMode = true
+		require.NoError(t, opts.Complete())
+		require.NoError(t, opts.Validate())
+		require.Equal(t, 5600, opts.NIXLPushSideChannelPort)
+		require.Equal(t, 1, opts.NIXLPushPrefillPPSize)
+	})
+}
+
 func TestValidateConnector(t *testing.T) {
 	tests := []struct {
 		name      string

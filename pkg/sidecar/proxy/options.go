@@ -242,6 +242,11 @@ func NewOptions() *Options {
 			MoRIIORemoteHosts: nil,
 			MoRIIODPSizeLocal: 0,
 			MoRIIODecodeHosts: nil,
+
+			// vLLM's VLLM_NIXL_SIDE_CHANNEL_PORT default.
+			NIXLPushSideChannelPort: 5600,
+			NIXLPushPrefillTPSize:   1,
+			NIXLPushPrefillPPSize:   1,
 		},
 		vllmPort:      defaultVLLMPort,
 		inferencePool: os.Getenv(envInferencePool),
@@ -332,6 +337,16 @@ func (opts *Options) AddFlags(fs *pflag.FlagSet) {
 			"remote_hosts. Kubernetes DNS names (e.g., 'pod-name.namespace.svc.cluster.local') "+
 			"are resolved to IPs at startup; literal IPs are used as-is. "+
 			"Pair with --moriio-dp-size-local.")
+
+	fs.BoolVar(&opts.NIXLPushMode, "nixl-push-mode", opts.NIXLPushMode,
+		"Dispatch prefill and decode concurrently for vLLM's NixlPushConnector. "+
+			"The prefill engine's engine_id must be '<pod IP>:<side channel port>'. Requires --kv-connector=nixlv2.")
+	fs.IntVar(&opts.NIXLPushSideChannelPort, "nixl-push-side-channel-port", opts.NIXLPushSideChannelPort,
+		"Prefill engine's NIXL side channel port (VLLM_NIXL_SIDE_CHANNEL_PORT). Only used with --nixl-push-mode.")
+	fs.IntVar(&opts.NIXLPushPrefillTPSize, "nixl-push-prefill-tp-size", opts.NIXLPushPrefillTPSize,
+		"Prefill engine's tensor-parallel size. Only used with --nixl-push-mode.")
+	fs.IntVar(&opts.NIXLPushPrefillPPSize, "nixl-push-prefill-pp-size", opts.NIXLPushPrefillPPSize,
+		"Prefill engine's pipeline-parallel size. Only used with --nixl-push-mode.")
 
 	fs.StringSliceVar(&opts.enableTLS, enableTLS, opts.enableTLS, "stages to enable TLS for. Supported: "+supportedTLSStageNamesStr+". Can be specified multiple times or as comma-separated values.")
 	fs.StringSliceVar(&opts.tlsInsecureSkipVerify, tlsInsecureSkipVerify, opts.tlsInsecureSkipVerify, "stages to skip TLS verification for. Supported: "+supportedTLSStageNamesStr+". Can be specified multiple times or as comma-separated values.")
@@ -662,6 +677,21 @@ func (opts *Options) Validate() error {
 	// offloading already provides the tier natively and needs no flag.
 	if opts.EnableP2PPull && opts.KVConnector != KVConnectorNIXLV2 {
 		return fmt.Errorf("--enable-p2p-pull requires --kv-connector=%s (got %q)", KVConnectorNIXLV2, opts.KVConnector)
+	}
+
+	if opts.NIXLPushMode {
+		if opts.KVConnector != KVConnectorNIXLV2 {
+			return fmt.Errorf("--nixl-push-mode requires --kv-connector=%s (got %q)", KVConnectorNIXLV2, opts.KVConnector)
+		}
+		if opts.MoRIIOWriteMode {
+			return errors.New("--nixl-push-mode and --moriio-write-mode are mutually exclusive")
+		}
+		if opts.NIXLPushPrefillTPSize < 1 {
+			return fmt.Errorf("--nixl-push-prefill-tp-size must be a positive integer, got %d", opts.NIXLPushPrefillTPSize)
+		}
+		if opts.NIXLPushPrefillPPSize < 1 {
+			return fmt.Errorf("--nixl-push-prefill-pp-size must be a positive integer, got %d", opts.NIXLPushPrefillPPSize)
+		}
 	}
 
 	// Validate SSRF protection requirements

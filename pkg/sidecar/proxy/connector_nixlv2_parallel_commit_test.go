@@ -18,6 +18,7 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -199,5 +200,104 @@ var _ = Describe("NIXL Connector (v2) parallel WRITE dispatch commit point", fun
 		Expect(hdr.Get("Content-Type")).To(ContainSubstring(eventStreamContentType))
 		Expect(body).To(ContainSubstring("hello"))
 		Expect(body).To(ContainSubstring("[DONE]"))
+	})
+})
+
+// capturedRequest records what one stage backend received.
+type capturedRequest struct {
+	requestID string
+	kvParams  map[string]any
+	body      map[string]any
+}
+
+func captureRequest(r *http.Request) capturedRequest {
+	raw, _ := io.ReadAll(r.Body) //nolint:errcheck
+	var body map[string]any
+	Expect(json.Unmarshal(raw, &body)).To(Succeed())
+	kv, _ := body[requestFieldKVTransferParams].(map[string]any)
+	return capturedRequest{requestID: r.Header.Get(requestHeaderRequestID), kvParams: kv, body: body}
+}
+
+func nixlPushConfig(cfg *Config) {
+	cfg.MoRIIOWriteMode = false
+	cfg.MoRIIOParallelDispatch = false
+	cfg.NIXLPushMode = true
+	cfg.NIXLPushSideChannelPort = 5600
+	cfg.NIXLPushPrefillTPSize = 2
+	cfg.NIXLPushPrefillPPSize = 8
+}
+
+var _ = Describe("NIXL Connector (v2) push dispatch", func() {
+
+	It("dispatches prefill and decode concurrently", func() {
+		// Each backend waits for the other to be reached, so a serial dispatch
+		// times out in the first backend and fails the request.
+		prefillReached := make(chan struct{})
+		decodeReached := make(chan struct{})
+		prefill := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			close(prefillReached)
+			select {
+			case <-decodeReached:
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"kv_transfer_params":{}}`))
+			case <-time.After(3 * time.Second):
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+		})
+		decode := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			close(decodeReached)
+			<-prefillReached
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"decoded","choices":[]}`))
+		})
+
+		env := startParallelCommitProxy(prefill, decode, nixlPushConfig)
+
+		status, _, body, err := env.send(10 * time.Second)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(status).To(Equal(http.StatusOK))
+		Expect(body).To(ContainSubstring("decoded"))
+	})
+
+	It("names the prefill engine in decode's kv_transfer_params", func() {
+		prefillCh := make(chan capturedRequest, 1)
+		decodeCh := make(chan capturedRequest, 1)
+		prefill := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			prefillCh <- captureRequest(r)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"kv_transfer_params":{}}`))
+		})
+		decode := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			decodeCh <- captureRequest(r)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"choices":[]}`))
+		})
+
+		env := startParallelCommitProxy(prefill, decode, nixlPushConfig)
+
+		status, _, _, err := env.send(10 * time.Second)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(status).To(Equal(http.StatusOK))
+
+		p := <-prefillCh
+		d := <-decodeCh
+		prefillHost := strings.Split(env.prefillHost, ":")[0]
+
+		Expect(p.requestID).ToNot(BeEmpty())
+		Expect(d.requestID).To(Equal(p.requestID))
+
+		Expect(p.kvParams).To(HaveKeyWithValue(requestFieldDoRemoteDecode, true))
+		Expect(p.kvParams).To(HaveKeyWithValue(requestFieldDoRemotePrefill, false))
+		Expect(p.body).To(HaveKeyWithValue("max_tokens", BeNumerically("==", 1)))
+
+		Expect(d.kvParams).To(HaveKeyWithValue(requestFieldDoRemotePrefill, true))
+		Expect(d.kvParams).To(HaveKeyWithValue(requestFieldDoRemoteDecode, false))
+		Expect(d.kvParams).To(HaveKeyWithValue(requestFieldRemoteEngineID, prefillHost+":5600"))
+		Expect(d.kvParams).To(HaveKeyWithValue(requestFieldRemoteHost, prefillHost))
+		Expect(d.kvParams).To(HaveKeyWithValue(requestFieldRemotePort, BeNumerically("==", 5600)))
+		Expect(d.kvParams).To(HaveKeyWithValue("tp_size", BeNumerically("==", 2)))
+		Expect(d.kvParams).To(HaveKeyWithValue("pp_size", BeNumerically("==", 8)))
+		Expect(d.kvParams).To(HaveKeyWithValue(requestFieldRemoteRequestID, "chatcmpl-"+p.requestID))
+		Expect(d.body).To(HaveKeyWithValue("max_tokens", BeNumerically("==", 50)))
 	})
 })
