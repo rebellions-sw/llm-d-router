@@ -1,0 +1,32 @@
+Rebellions modifications to llm-d-router
+========================================
+
+This image is a Derivative Work of llm-d-router (https://github.com/llm-d/llm-d-router),
+licensed under the Apache License, Version 2.0. The upstream license text is at
+/licenses/LICENSE.
+
+Upstream baseline
+-----------------
+  repository : https://github.com/llm-d/llm-d-router
+  tag        : v0.10.0
+
+Changes made by Rebellions Inc. (Apache-2.0 section 4(b))
+---------------------------------------------------------
+  added    pkg/epp/framework/plugins/requestcontrol/programaware/
+           Program-aware admission ported from ThunderAgent: pins each agent session
+           to one rank, admits sessions against rank KV capacity, pauses and resumes
+           them. Registered as plugin type "program-aware".
+           Copyright 2026 Rebellions Inc., Apache-2.0.
+
+  modified cmd/epp/runner/runner.go
+           Imports the plugin above and registers it alongside the upstream plugins.
+           Upstream copyright notice is preserved.
+
+  modified Dockerfile.epp
+           Copies the license texts listed here into /licenses of the runtime image.
+
+No other upstream file is changed. Upstream copyright, patent, trademark and attribution
+notices are preserved as required by Apache-2.0 section 4(c).
+
+This is not an official llm-d distribution. "llm-d" is not used in the image name; see
+Apache-2.0 section 6 (Trademarks).

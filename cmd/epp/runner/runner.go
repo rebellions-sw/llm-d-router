@@ -12,6 +12,9 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+Modified by Rebellions Inc. in 2026: registers the program-aware request control
+plugin (pkg/epp/framework/plugins/requestcontrol/programaware). See /licenses/NOTICE-rebellions.
 */
 
 package runner
@@ -101,6 +104,9 @@ import (
 	latencyproducer "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requestcontrol/dataproducer/predictedlatency"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requestcontrol/dataproducer/sessionid"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requestcontrol/dataproducer/tokenizer"
+
+	// programadmission: flowcontrol/fairness/program-aware already uses the package name.
+	programadmission "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requestcontrol/programaware"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requestcontrol/requestattributereporter"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requestcontrol/requestheader/agentidentity"
 	disaggregatedsetrollout "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requestcontrol/screener/disaggregatedsetrollout"
@@ -567,6 +573,10 @@ func (r *Runner) registerInTreePlugins() {
 	// request control screeners
 	// Alpha
 	fwkplugin.Register(disaggregatedsetrollout.PluginType, fwkplugin.StabilityAlpha, disaggregatedsetrollout.Factory)
+
+	// program-aware admission (request header, filter, response body)
+	// Alpha
+	fwkplugin.Register(programadmission.PluginType, fwkplugin.StabilityAlpha, programadmission.Factory)
 
 	// bylabel role filters
 	// Beta
