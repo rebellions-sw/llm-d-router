@@ -12,6 +12,9 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+Modified by Rebellions Inc. in 2026: registers the round-robin scheduling picker
+(pkg/epp/framework/plugins/scheduling/picker/roundrobin). See /licenses/NOTICE-rebellions.
 */
 
 package runner
@@ -120,6 +123,8 @@ import (
 	utilizationfilter "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/scheduling/filter/utilization"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/scheduling/picker/maxscore"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/scheduling/picker/random"
+	// rrpicker: flowcontrol/fairness/roundrobin 이 같은 패키지명을 먼저 쓰고 있어 alias 가 필요하다.
+	rrpicker "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/scheduling/picker/roundrobin"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/scheduling/picker/weightedrandom"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/scheduling/profilehandler/dataparallel"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/scheduling/profilehandler/disagg"
@@ -611,6 +616,7 @@ func (r *Runner) registerInTreePlugins() {
 	fwkplugin.Register(prefix.PrefixCacheScorerPluginType, fwkplugin.StabilityBeta, prefix.PrefixCachePluginFactory)
 	fwkplugin.Register(maxscore.MaxScorePickerType, fwkplugin.StabilityBeta, maxscore.MaxScorePickerFactory)
 	fwkplugin.Register(random.RandomPickerType, fwkplugin.StabilityBeta, random.RandomPickerFactory)
+	fwkplugin.Register(rrpicker.RoundRobinPickerType, fwkplugin.StabilityBeta, rrpicker.RoundRobinPickerFactory)
 	fwkplugin.Register(weightedrandom.WeightedRandomPickerType, fwkplugin.StabilityBeta, weightedrandom.WeightedRandomPickerFactory)
 	fwkplugin.Register(single.SingleProfileHandlerType, fwkplugin.StabilityBeta, single.SingleProfileHandlerFactory)
 	fwkplugin.RegisterDeprecated(disagg.DisaggHeadersHandlerType, fwkplugin.StabilityBeta, disagg.HeadersHandlerFactory, "v0.9.0", "v0.11.0", disagg.DisaggProfileHandlerType) //nolint:staticcheck // deprecated in v0.9.0 (#905)
